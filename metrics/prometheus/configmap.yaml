@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: k8s-grafana-stack
+        env: lab
+
+    # Alloy handles all scraping and remote-writes into Prometheus.
+    # Prometheus operates as a pure TSDB + query backend here.
+    # The --web.enable-remote-write-receiver flag (set in the Deployment)
+    # is the only requirement on the Prometheus side.
+    scrape_configs: []

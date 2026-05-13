@@ -1,0 +1,7 @@
+# Prometheus no longer performs K8s service discovery — Alloy handles all
+# scraping and remote-writes metrics in. Only a ServiceAccount is needed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring

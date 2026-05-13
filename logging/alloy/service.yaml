@@ -1,0 +1,40 @@
+---
+# Headless service — Alloy pods use this to discover each other for clustering
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy-cluster
+  namespace: monitoring
+  labels:
+    app: alloy
+spec:
+  clusterIP: None
+  selector:
+    app: alloy
+  ports:
+    - name: clustering
+      port: 12346
+      targetPort: 12346
+---
+# ClusterIP service — apps send OTLP here; also exposes the Alloy UI/metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy
+  namespace: monitoring
+  labels:
+    app: alloy
+spec:
+  selector:
+    app: alloy
+  ports:
+    - name: http
+      port: 12345
+      targetPort: 12345
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+  type: ClusterIP

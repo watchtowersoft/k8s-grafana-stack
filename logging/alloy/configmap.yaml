@@ -1,0 +1,305 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: monitoring
+data:
+  config.alloy: |
+    // ==========================================================================
+    // Grafana Alloy — unified observability agent
+    // Signals: logs → Loki | metrics → Prometheus | traces → Tempo (via OTLP)
+    // ==========================================================================
+
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    // Hash-ring clustering so DaemonSet instances share scrape targets —
+    // each clustered scrape job is only executed by one Alloy pod at a time.
+    clustering {
+      enabled = true
+    }
+
+    // ==========================================================================
+    // LOGS — tail pod and node logs → Loki
+    // ==========================================================================
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_node_name"]
+        target_label  = "__host__"
+      }
+
+      rule {
+        action = "labelmap"
+        regex  = "__meta_kubernetes_pod_label_(.+)"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+
+      // Build log path from pod UID + container name
+      rule {
+        source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+        separator     = "/"
+        replacement   = "/var/log/pods/*$1/*.log"
+        target_label  = "__path__"
+      }
+    }
+
+    loki.source.file "pod_logs" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.write.default.receiver]
+    }
+
+    local.file_match "node_logs" {
+      path_targets = [{"__path__" = "/var/log/*.log", "job" = "node-logs"}]
+    }
+
+    loki.source.file "node_logs" {
+      targets    = local.file_match.node_logs.targets
+      forward_to = [loki.write.default.receiver]
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"
+      }
+    }
+
+    // ==========================================================================
+    // METRICS — scrape all K8s targets → Prometheus remote write
+    // node-exporter: NOT clustered (each pod scrapes its own node intentionally)
+    // everything else: clustered (single pod handles each target)
+    // ==========================================================================
+
+    // node-exporter — this pod's node only, via HOST_IP from the downward API
+    prometheus.scrape "node_exporter" {
+      targets = [{
+        __address__ = env("HOST_IP") + ":9100",
+        instance    = env("NODE_NAME"),
+        job         = "node-exporter",
+      }]
+      forward_to = [prometheus.remote_write.prometheus.receiver]
+    }
+
+    // kube-state-metrics — clustered, one scrape across all Alloy instances
+    prometheus.scrape "kube_state_metrics" {
+      clustering { enabled = true }
+      targets    = [{ __address__ = "kube-state-metrics:8080", job = "kube-state-metrics" }]
+      forward_to = [prometheus.remote_write.prometheus.receiver]
+    }
+
+    // Prometheus self-metrics — clustered
+    prometheus.scrape "prometheus" {
+      clustering { enabled = true }
+      targets    = [{ __address__ = "prometheus:9090", job = "prometheus" }]
+      forward_to = [prometheus.remote_write.prometheus.receiver]
+    }
+
+    // Kubernetes nodes — used by both kubelet and cadvisor scrapes
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    // kubelet metrics via K8s API proxy — clustered
+    discovery.relabel "kubelet" {
+      targets = discovery.kubernetes.nodes.targets
+
+      rule {
+        target_label = "__address__"
+        replacement  = "kubernetes.default.svc:443"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label  = "__metrics_path__"
+        replacement   = "/api/v1/nodes/$1/proxy/metrics"
+      }
+
+      rule {
+        action = "labelmap"
+        regex  = "__meta_kubernetes_node_label_(.+)"
+      }
+    }
+
+    prometheus.scrape "kubelet" {
+      clustering { enabled = true }
+      targets           = discovery.relabel.kubelet.output
+      scheme            = "https"
+      bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+      tls_config { insecure_skip_verify = true }
+      forward_to        = [prometheus.remote_write.prometheus.receiver]
+      job_name          = "kubelet"
+    }
+
+    // cAdvisor metrics via K8s API proxy — clustered
+    discovery.relabel "kubelet_cadvisor" {
+      targets = discovery.kubernetes.nodes.targets
+
+      rule {
+        target_label = "__address__"
+        replacement  = "kubernetes.default.svc:443"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_node_name"]
+        target_label  = "__metrics_path__"
+        replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+      }
+
+      rule {
+        action = "labelmap"
+        regex  = "__meta_kubernetes_node_label_(.+)"
+      }
+    }
+
+    prometheus.scrape "kubelet_cadvisor" {
+      clustering { enabled = true }
+      targets           = discovery.relabel.kubelet_cadvisor.output
+      scheme            = "https"
+      bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+      tls_config { insecure_skip_verify = true }
+      forward_to        = [prometheus.remote_write.prometheus.receiver]
+      job_name          = "kubelet-cadvisor"
+    }
+
+    // Annotation-based pod scraping — clustered, distributed across Alloy instances
+    discovery.relabel "pods_scrape" {
+      targets = discovery.kubernetes.pods.targets
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+        action        = "keep"
+        regex         = "true"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scheme"]
+        action        = "replace"
+        target_label  = "__scheme__"
+        regex         = "(.+)"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+        action        = "replace"
+        target_label  = "__metrics_path__"
+        regex         = "(.+)"
+      }
+
+      rule {
+        source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        action        = "replace"
+        regex         = "([^:]+)(?:\\d+)?;(\\d+)"
+        replacement   = "$1:$2"
+        target_label  = "__address__"
+      }
+
+      rule {
+        action = "labelmap"
+        regex  = "__meta_kubernetes_pod_label_(.+)"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+    }
+
+    prometheus.scrape "pods" {
+      clustering { enabled = true }
+      targets    = discovery.relabel.pods_scrape.output
+      forward_to = [prometheus.remote_write.prometheus.receiver]
+      job_name   = "kubernetes-pods"
+    }
+
+    prometheus.remote_write "prometheus" {
+      endpoint {
+        url = "http://prometheus:9090/api/v1/write"
+      }
+    }
+
+    // ==========================================================================
+    // OTLP — receive traces + metrics + logs from apps, fan out to backends
+    // ==========================================================================
+
+    otelcol.receiver.otlp "default" {
+      grpc { endpoint = "0.0.0.0:4317" }
+      http { endpoint = "0.0.0.0:4318" }
+
+      output {
+        traces  = [otelcol.processor.memory_limiter.default.input]
+        metrics = [otelcol.processor.memory_limiter.default.input]
+        logs    = [otelcol.processor.memory_limiter.default.input]
+      }
+    }
+
+    otelcol.processor.memory_limiter "default" {
+      check_interval         = "1s"
+      limit_percentage       = 80
+      spike_limit_percentage = 25
+
+      output {
+        traces  = [otelcol.processor.batch.default.input]
+        metrics = [otelcol.processor.batch.default.input]
+        logs    = [otelcol.processor.batch.default.input]
+      }
+    }
+
+    otelcol.processor.batch "default" {
+      output {
+        traces  = [otelcol.exporter.otlp.tempo.input]
+        metrics = [otelcol.exporter.prometheusremotewrite.prometheus.input]
+        logs    = [otelcol.exporter.loki.default.input]
+      }
+    }
+
+    // Traces → Tempo
+    otelcol.exporter.otlp "tempo" {
+      client {
+        endpoint = "tempo:4317"
+        tls { insecure = true }
+      }
+    }
+
+    // OTLP metrics → Prometheus remote write
+    otelcol.exporter.prometheusremotewrite "prometheus" {
+      endpoint {
+        url = "http://prometheus:9090/api/v1/write"
+      }
+    }
+
+    // OTLP logs → Loki (bridged through Alloy's native loki.write)
+    otelcol.exporter.loki "default" {
+      forward_to = [loki.write.default.receiver]
+    }
