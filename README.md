@@ -50,6 +50,17 @@ All resources deploy into the `monitoring` namespace.
 ### Prerequisites
 - `kubectl` configured against your cluster
 - `kustomize` v5+ **or** `kubectl` v1.27+ (ships with kustomize built in)
+- A default StorageClass (see below)
+
+#### StorageClass — bare-metal / Vagrant clusters
+
+If `kubectl get storageclass` returns nothing, your cluster has no PVC provisioner and pods will fail to schedule. Install `local-path-provisioner` first — it creates a default StorageClass backed by hostPath volumes:
+
+```bash
+kubectl apply -f storage/local-path-provisioner.yaml
+```
+
+Skip this step if your cluster already has a default StorageClass (kind, minikube, GKE, EKS, AKS all do out of the box).
 
 ### Deploy
 
