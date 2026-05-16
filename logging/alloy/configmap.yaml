@@ -15,11 +15,9 @@ data:
       format = "logfmt"
     }
 
-    // Hash-ring clustering so DaemonSet instances share scrape targets —
-    // each clustered scrape job is only executed by one Alloy pod at a time.
-    clustering {
-      enabled = true
-    }
+    // Hash-ring clustering is enabled via --cluster.enabled=true in the DaemonSet
+    // args. Individual prometheus.scrape blocks opt in with clustering { enabled = true }
+    // to distribute targets across Alloy pods so each target is scraped only once.
 
     // ==========================================================================
     // LOGS — tail pod and node logs → Loki
@@ -279,7 +277,7 @@ data:
     otelcol.processor.batch "default" {
       output {
         traces  = [otelcol.exporter.otlp.tempo.input]
-        metrics = [otelcol.exporter.prometheusremotewrite.prometheus.input]
+        metrics = [otelcol.exporter.prometheus.default.input]
         logs    = [otelcol.exporter.loki.default.input]
       }
     }
@@ -292,11 +290,9 @@ data:
       }
     }
 
-    // OTLP metrics → Prometheus remote write
-    otelcol.exporter.prometheusremotewrite "prometheus" {
-      endpoint {
-        url = "http://prometheus:9090/api/v1/write"
-      }
+    // OTLP metrics → convert to Prometheus format → remote write
+    otelcol.exporter.prometheus "default" {
+      forward_to = [prometheus.remote_write.prometheus.receiver]
     }
 
     // OTLP logs → Loki (bridged through Alloy's native loki.write)
