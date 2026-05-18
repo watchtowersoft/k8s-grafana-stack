@@ -6,13 +6,12 @@ Cloud-agnostic Kubernetes observability stack covering all three pillars — met
 
 | Component | Role | Image |
 |---|---|---|
-| **Prometheus** | Metrics scraping & storage | `prom/prometheus:v2.51.0` |
+| **Prometheus** | Metrics storage + query backend (TSDB) | `prom/prometheus:v2.51.0` |
 | **kube-state-metrics** | K8s object metrics | `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.12.0` |
 | **node-exporter** | Host/node metrics (DaemonSet) | `prom/node-exporter:v1.8.0` |
 | **Loki** | Log aggregation | `grafana/loki:2.9.6` |
 | **Alloy** | Logs + metrics scraping + OTLP receiver (DaemonSet) | `grafana/alloy:v1.3.1` |
 | **Tempo** | Distributed tracing | `grafana/tempo:2.4.2` |
-| ~~OTel Collector~~ | Replaced by Alloy | — |
 | **Grafana** | Unified dashboards | `grafana/grafana:10.4.2` |
 
 All resources deploy into the `monitoring` namespace.
@@ -33,9 +32,9 @@ All resources deploy into the `monitoring` namespace.
                      │  │ (file)  │  │ (scrape) │  │  recv  │  │
                      │  └────┬────┘  └────┬─────┘  └───┬────┘  │
                      └───────┼────────────┼─────────────┼───────┘
-                             │            │         ┌───┴────────────┐
-                             ▼            ▼         ▼traces  metrics │logs
-                           Loki     Prometheus    Tempo     Prom     Loki
+                             │            │         ┌───┴──────────────┐
+                             ▼            ▼     traces  metrics    logs │
+                           Loki     Prometheus   Tempo   Prom      Loki
                                          ▲
                                node-exporter (DaemonSet)
                                kube-state-metrics
@@ -45,42 +44,49 @@ All resources deploy into the `monitoring` namespace.
                                      Grafana (all three datasources pre-wired)
 ```
 
+Prometheus operates as a pure TSDB — Alloy handles all scraping and remote-writes metrics in.
+
 ## Quick Start
 
 ### Prerequisites
 - `kubectl` configured against your cluster
 - `kustomize` v5+ **or** `kubectl` v1.27+ (ships with kustomize built in)
-- A default StorageClass (see below)
 
-#### StorageClass — bare-metal / Vagrant clusters
+### 1 — Create your production overlay
 
-If `kubectl get storageclass` returns nothing, your cluster has no PVC provisioner and pods will fail to schedule. Install `local-path-provisioner` first — it creates a default StorageClass backed by hostPath volumes:
-
-```bash
-kubectl apply -f storage/local-path-provisioner.yaml
-```
-
-Skip this step if your cluster already has a default StorageClass (kind, minikube, GKE, EKS, AKS all do out of the box).
-
-### Deploy
+`overlays/production/` is **gitignored and never committed**. It must be created manually on every machine you deploy from:
 
 ```bash
-# 1. Create your production overlay (gitignored — never committed)
 cp -r overlays/example overlays/production
-
-# 2. Set your Grafana credentials
 $EDITOR overlays/production/grafana-credentials.env
-
-# 3. Deploy
-./scripts/deploy.sh
-# or: kubectl apply -k overlays/production
 ```
 
-### Access Grafana locally
+Set real credentials in `grafana-credentials.env`:
+```
+GF_SECURITY_ADMIN_USER=admin
+GF_SECURITY_ADMIN_PASSWORD=your-secure-password
+```
+
+> There is no root `kustomization.yaml`. Always target an overlay:
+> `kubectl apply -k overlays/production` — **not** `kubectl apply -k .`
+
+### 2 — Deploy
+
+```bash
+./scripts/deploy.sh
+# or directly:
+kubectl apply -k overlays/production
+```
+
+The base includes `local-path-provisioner` which creates a default StorageClass backed by hostPath volumes. If your cluster already has a default StorageClass (kind, minikube, GKE, EKS, AKS), it will just be an extra no-op resource — safe to leave in.
+
+### 3 — Access Grafana
 
 ```bash
 ./scripts/port-forward.sh
-# then open http://localhost:3000
+# Grafana  → http://localhost:3000
+# Prometheus → http://localhost:9090
+# Alloy UI   → http://localhost:12345
 ```
 
 ### Tear down
@@ -88,38 +94,47 @@ $EDITOR overlays/production/grafana-credentials.env
 ```bash
 ./scripts/teardown.sh
 
-# PVCs are preserved — delete manually if you want a clean slate:
+# PVCs are preserved — delete manually for a clean slate:
 kubectl delete pvc --all -n monitoring
 ```
+
+### Validate before applying
+
+```bash
+./scripts/validate.sh          # uses overlays/example by default
+./scripts/validate.sh overlays/production
+```
+
+Runs kustomize build, kubeconform schema validation, and Alloy config syntax check.
 
 ## Directory Layout
 
 ```
 k8s-grafana-stack/
-├── base/                              # generic, cluster-agnostic manifests
+├── base/                              # generic, cluster-agnostic manifests (committed)
 │   ├── kustomization.yaml
-│   ├── storage/                       # local-path-provisioner (bare-metal default)
+│   ├── storage/                       # local-path-provisioner for bare-metal clusters
 │   ├── namespaces/
 │   ├── metrics/
-│   │   ├── prometheus/
+│   │   ├── prometheus/                # TSDB backend only — Alloy handles scraping
 │   │   ├── kube-state-metrics/
 │   │   └── node-exporter/
 │   ├── logging/
 │   │   ├── loki/
-│   │   └── alloy/                     # logs + metrics + OTLP (DaemonSet)
+│   │   └── alloy/                     # unified agent: logs + metrics + OTLP
 │   ├── tracing/
 │   │   └── tempo/
 │   └── grafana/
 ├── overlays/
-│   ├── example/                       # committed — placeholder values, patch examples
-│   │   ├── kustomization.yaml
+│   ├── example/                       # committed — safe placeholder values
+│   │   ├── kustomization.yaml         # patch examples for storage class, resources, etc.
 │   │   └── grafana-credentials.env
-│   └── production/                    # gitignored — your real cluster values
+│   └── production/                    # gitignored — never committed, create manually
 │       ├── kustomization.yaml
 │       └── grafana-credentials.env
 └── scripts/
-    ├── deploy.sh                      # usage: ./deploy.sh [overlay]
-    ├── validate.sh
+    ├── deploy.sh                      # ./deploy.sh [overlay path]
+    ├── validate.sh                    # ./validate.sh [overlay path]
     ├── teardown.sh
     └── port-forward.sh
 ```
@@ -128,33 +143,52 @@ k8s-grafana-stack/
 
 Send telemetry from any app directly to Alloy:
 
-```
-# gRPC  (preferred)
+```bash
+# gRPC (preferred)
 OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy.monitoring.svc.cluster.local:4317
 
 # HTTP
 OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy.monitoring.svc.cluster.local:4318
 ```
 
-Alloy fans out automatically — traces → Tempo, metrics → Prometheus remote write, logs → Loki.
-No separate OTel Collector needed.
+Alloy fans out automatically — traces → Tempo, metrics → Prometheus, logs → Loki. No separate collector needed.
 
-For pod logs you don't need to change anything; Promtail picks them up from `/var/log/pods` on every node.
+Pod logs require no instrumentation — Alloy tails `/var/log/pods` on every node automatically.
 
-## Auto-Scrape Pods/Services
+## Auto-Scrape Pods
 
-Add these annotations to any pod or service to have Prometheus scrape it:
+Add these annotations to any pod in any namespace to have Alloy scrape it:
 
 ```yaml
 annotations:
   prometheus.io/scrape: "true"
-  prometheus.io/port: "8080"       # your metrics port
+  prometheus.io/port: "8080"
   prometheus.io/path: "/metrics"   # optional, defaults to /metrics
 ```
 
+## Customising via Overlays
+
+Cluster-specific changes belong in `overlays/production/kustomization.yaml`, not in `base/`. See `overlays/example/kustomization.yaml` for commented examples including:
+
+- Pinning a specific StorageClass across all PVCs
+- Increasing storage sizes for larger clusters
+- Adding node affinity to schedule the stack on dedicated nodes
+
+### Retention
+
+| Component | Default | Config location |
+|---|---|---|
+| Prometheus | 15 days | `--storage.tsdb.retention.time` in [base/metrics/prometheus/deployment.yaml](base/metrics/prometheus/deployment.yaml) |
+| Loki | 7 days | `retention_period` in [base/logging/loki/configmap.yaml](base/logging/loki/configmap.yaml) |
+| Tempo | 48 hours | `block_retention` in [base/tracing/tempo/configmap.yaml](base/tracing/tempo/configmap.yaml) |
+
+### Alloy clustering
+
+Alloy uses a hash-ring to distribute scrape targets across DaemonSet pods. Targets marked `clustering { enabled = true }` are scraped by exactly one Alloy instance — preventing duplicate time series for cluster-wide targets (kube-state-metrics, kubelet, cAdvisor). Node-exporter is intentionally not clustered so each pod scrapes its own node.
+
 ## Recommended Grafana Dashboards
 
-Import these from grafana.com (Dashboards → Import → enter ID):
+Import from grafana.com (Dashboards → Import → enter ID):
 
 | ID | Name |
 |---|---|
@@ -163,25 +197,10 @@ Import these from grafana.com (Dashboards → Import → enter ID):
 | `15141` | Kubernetes / Loki Logs |
 | `16098` | Tempo / Tracing |
 
-## Customisation Notes
+## Production Considerations
 
-### Storage class
-All PVCs leave `storageClassName` commented out (uses cluster default). Uncomment and set it to target a specific storage class for your environment.
-
-### Credentials
-Grafana admin credentials are set via env vars in [grafana/deployment.yaml](grafana/deployment.yaml). Change them before exposing the service externally, or replace with a `secretKeyRef`.
-
-### Retention
-- Prometheus: 15 days (`--storage.tsdb.retention.time=15d` in [metrics/prometheus/deployment.yaml](metrics/prometheus/deployment.yaml))
-- Loki: 7 days (`retention_period: 168h` in [logging/loki/configmap.yaml](logging/loki/configmap.yaml))
-- Tempo: 48 hours (`block_retention: 48h` in [tracing/tempo/configmap.yaml](tracing/tempo/configmap.yaml))
-
-### Alloy clustering
-Alloy uses a hash-ring to distribute scrape targets across DaemonSet pods. Targets marked `clustering { enabled = true }` are scraped by exactly one Alloy instance — preventing duplicate time series for cluster-wide targets (kube-state-metrics, kubelet, etc.). Node-exporter is intentionally *not* clustered so each pod scrapes its own node.
-
-### Production considerations
 - Replace single-replica Deployments with StatefulSets for Prometheus/Loki/Tempo
 - Add Alertmanager for alert routing
 - Use object storage (S3/GCS/MinIO) for Loki and Tempo instead of local filesystem
 - Add NetworkPolicies to restrict traffic between components
-- Pin `nodePort` in [grafana/service.yaml](grafana/service.yaml) or add an Ingress resource
+- Add an Ingress resource for Grafana instead of relying on NodePort/port-forward
