@@ -32,7 +32,7 @@ jobs:
           kubeconform -v
 
       - name: Build manifests
-        run: kustomize build . > /tmp/manifests.yaml
+        run: kustomize build overlays/example > /tmp/manifests.yaml
 
       - name: Validate K8s schemas
         run: |
@@ -46,7 +46,7 @@ jobs:
         run: |
           python3 - <<'EOF' > /tmp/config.alloy
           import yaml, sys
-          with open("logging/alloy/configmap.yaml") as f:
+          with open("base/logging/alloy/configmap.yaml") as f:
               cm = yaml.safe_load(f)
           config = cm.get("data", {}).get("config.alloy")
           if not config:

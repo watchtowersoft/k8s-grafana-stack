@@ -65,18 +65,22 @@ Skip this step if your cluster already has a default StorageClass (kind, minikub
 ### Deploy
 
 ```bash
-# Full stack
-kubectl apply -k .
+# 1. Create your production overlay (gitignored — never committed)
+cp -r overlays/example overlays/production
 
-# Or use the helper script
+# 2. Set your Grafana credentials
+$EDITOR overlays/production/grafana-credentials.env
+
+# 3. Deploy
 ./scripts/deploy.sh
+# or: kubectl apply -k overlays/production
 ```
 
 ### Access Grafana locally
 
 ```bash
 ./scripts/port-forward.sh
-# then open http://localhost:3000  (admin / admin)
+# then open http://localhost:3000
 ```
 
 ### Tear down
@@ -92,26 +96,30 @@ kubectl delete pvc --all -n monitoring
 
 ```
 k8s-grafana-stack/
-├── kustomization.yaml          # root — apply this
-├── namespaces/
-│   └── monitoring.yaml
-├── metrics/
-│   ├── prometheus/             # RBAC, config, PVC, Deployment, Service
-│   ├── kube-state-metrics/
-│   └── node-exporter/         # DaemonSet
-├── logging/
-│   ├── loki/                  # config, PVC, Deployment, Service
-│   └── alloy/                 # RBAC, config, DaemonSet, Services (cluster + OTLP)
-├── tracing/
-│   └── tempo/                 # config, PVC, Deployment, Service
-├── grafana/
-│   ├── configmap-datasources.yaml   # Prometheus + Loki + Tempo pre-wired
-│   ├── configmap-dashboards.yaml    # dashboard provider config
-│   ├── pvc.yaml
-│   ├── deployment.yaml
-│   └── service.yaml           # NodePort :3000
+├── base/                              # generic, cluster-agnostic manifests
+│   ├── kustomization.yaml
+│   ├── storage/                       # local-path-provisioner (bare-metal default)
+│   ├── namespaces/
+│   ├── metrics/
+│   │   ├── prometheus/
+│   │   ├── kube-state-metrics/
+│   │   └── node-exporter/
+│   ├── logging/
+│   │   ├── loki/
+│   │   └── alloy/                     # logs + metrics + OTLP (DaemonSet)
+│   ├── tracing/
+│   │   └── tempo/
+│   └── grafana/
+├── overlays/
+│   ├── example/                       # committed — placeholder values, patch examples
+│   │   ├── kustomization.yaml
+│   │   └── grafana-credentials.env
+│   └── production/                    # gitignored — your real cluster values
+│       ├── kustomization.yaml
+│       └── grafana-credentials.env
 └── scripts/
-    ├── deploy.sh
+    ├── deploy.sh                      # usage: ./deploy.sh [overlay]
+    ├── validate.sh
     ├── teardown.sh
     └── port-forward.sh
 ```
