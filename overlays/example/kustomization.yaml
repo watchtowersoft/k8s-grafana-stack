@@ -8,6 +8,7 @@ resources:
 # and set real values there (production/ is gitignored).
 secretGenerator:
   - name: grafana-credentials
+    namespace: monitoring
     envs:
       - grafana-credentials.env
     options:
