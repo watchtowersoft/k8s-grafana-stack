@@ -31,8 +31,6 @@ spec:
             - /etc/alloy/config.alloy
             - --storage.path=/var/lib/alloy/data
             - --server.http.listen-addr=0.0.0.0:12345
-            - --cluster.enabled=true
-            - --cluster.join-addresses=alloy-cluster.monitoring.svc.cluster.local:12346
           ports:
             - name: http
               containerPort: 12345

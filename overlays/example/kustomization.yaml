@@ -47,3 +47,49 @@ patches: []
 #             observability: "true"
 #       target:
 #         kind: Deployment
+
+# ==========================================================================
+# Media Stack Integration (k8s-plex-stack)
+# ==========================================================================
+#
+# Alloy auto-discovers exporters in the media namespace via pod annotations.
+# No changes to the Alloy configmap are needed — the annotation-based
+# discovery.relabel "pods_scrape" block already covers all namespaces.
+#
+# Exporters deployed in k8s-plex-stack emit these annotations on their pods:
+#   prometheus.io/scrape: "true"
+#   prometheus.io/port:   "<port>"
+#   prometheus.io/path:   "/metrics"
+#
+# Scrape targets and their ports:
+#   radarr-exporter    → media namespace, port 9707
+#   sonarr-exporter    → media namespace, port 9708
+#   prowlarr-exporter  → media namespace, port 9709
+#   tautulli-exporter  → media namespace, port 9487
+#
+# Recommended Grafana dashboards to import from grafana.com:
+#   Tautulli       → ID 15372
+#   Exportarr (*arr) → ID 12530
+#
+# To import: Grafana UI → Dashboards → Import → enter the ID above.
+#
+# If you want to provision dashboards-as-code instead, download the JSON
+# from grafana.com, add it to a ConfigMap, and patch the Grafana deployment
+# to mount it under /var/lib/grafana/dashboards. Example patch:
+#
+#   patches:
+#     - patch: |-
+#         - op: add
+#           path: /spec/template/spec/volumes/-
+#           value:
+#             name: media-dashboards
+#             configMap:
+#               name: grafana-media-dashboards
+#         - op: add
+#           path: /spec/template/spec/containers/0/volumeMounts/-
+#           value:
+#             name: media-dashboards
+#             mountPath: /var/lib/grafana/dashboards/media
+#       target:
+#         kind: Deployment
+#         name: grafana
