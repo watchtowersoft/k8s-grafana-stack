@@ -6,7 +6,7 @@
 #   2. loki.source.file forward_to — routes through a CRI decoder stage first
 #      (containerd log lines are prefixed with timestamp/stream/flags that must be stripped)
 #
-# Copy this patch to overlays/production/patches/ and add it to your production kustomization.
+# Applied in: overlays/example and overlays/production (production is gitignored).
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -21,6 +21,12 @@ secretGenerator:
 # Copy patches/ to overlays/production/patches/ and add the same entry there.
 patches:
   - path: patches/alloy-config-containerd.yaml
+  # Multi-node clusters only: uncomment to enable hash-ring clustering.
+  # Distributes scrape targets across Alloy pods so each target is hit once.
+  # - path: patches/alloy-clustering.yaml
+  #   target:
+  #     kind: DaemonSet
+  #     name: alloy
 
 # Example patches:
 #

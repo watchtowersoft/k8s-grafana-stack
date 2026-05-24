@@ -1,0 +1,13 @@
+# Patch: enable Alloy hash-ring clustering
+#
+# Appends --cluster.enabled=true and --cluster.join-addresses to the DaemonSet.
+# The headless service "alloy-cluster:12346" already exists in base for peer discovery.
+#
+# Only apply this on multi-node clusters. On a single node it is harmless but unnecessary.
+# The clustering { enabled = true } blocks in config.alloy are no-ops until this is applied.
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: "--cluster.enabled=true"
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: "--cluster.join-addresses=alloy-cluster:12346"
