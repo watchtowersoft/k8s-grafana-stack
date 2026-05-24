@@ -14,8 +14,13 @@ secretGenerator:
     options:
       disableNameSuffixHash: true
 
-# Uncomment and customise patches below for your cluster.
-patches: []
+# Patches — uncomment and customise for your cluster.
+#
+# containerd/CRI clusters (kubeadm, k3s, RKE2): uncomment the line below.
+# This fixes the pod log path format and adds CRI log line decoding.
+# Copy patches/ to overlays/production/patches/ and add the same entry there.
+patches:
+  - path: patches/alloy-config-containerd.yaml
 
 # Example patches:
 #
