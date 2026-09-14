@@ -25,7 +25,7 @@ spec:
           effect: NoExecute
       containers:
         - name: alloy
-          image: grafana/alloy:v1.3.1
+          image: grafana/alloy:v1.19.2
           args:
             - run
             - /etc/alloy/config.alloy
