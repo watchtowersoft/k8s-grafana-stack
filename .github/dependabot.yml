@@ -5,6 +5,10 @@ updates:
   - "/base/**"
   schedule:
     interval: weekly
+  # Supply-chain guard: only propose versions published at least 7 days ago, so
+  # compromised releases have time to be caught and yanked. Security updates bypass this.
+  cooldown:
+    default-days: 7
   open-pull-requests-limit: 3
   groups:
     images-minor-and-patch:
@@ -15,6 +19,8 @@ updates:
   directory: "/"
   schedule:
     interval: monthly
+  cooldown:
+    default-days: 7
   open-pull-requests-limit: 3
   groups:
     actions-minor-and-patch:
